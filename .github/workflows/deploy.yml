@@ -1,43 +1,13 @@
 name: deploy
 
 on:
-  push:
-    tags:
-    - '*'
+  workflow_dispatch:
 
 jobs:
 
-  documents:
-    strategy:
-      max-parallel: 4
-      matrix:
-        python-version: [3.9]
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools
-        python -m pip install -r requirements/docs.txt
-    - name: Deploy documents
-      run: |
-        git config user.name ${{ secrets.GH_USER }}
-        git config user.email "${{ secrets.GH_EMAIL }}"
-        git remote add gh-token "https://${{ secrets.GH_TOKEN }}@github.com/facelessuser/soupsieve.git"
-        git fetch gh-token && git fetch gh-token gh-pages:gh-pages
-        python -m mkdocs gh-deploy -v --clean --remote-name gh-token
-        git push gh-token gh-pages
-
   pypi:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v3
@@ -47,9 +17,24 @@ jobs:
       - name: Package
         run: |
           pip install --upgrade build
-          python -m build -s -w
-      - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1
+          pip install hatchling==1.14.0
+          # hatchling 1.14.0's plugin/utils.py does `import importlib` but then calls
+          # `importlib.util.spec_from_file_location` when loading this project's custom
+          # metadata hook (hatch_build.py). That only worked because setuptools' startup
+          # .pth shim happened to import importlib.util; modern environments no longer do,
+          # so the backend subprocess dies with
+          # "AttributeError: module 'importlib' has no attribute 'util'".
+          # hatchling must stay pinned at exactly 1.14.0 because that version string is
+          # written verbatim into the wheel's WHEEL metadata as "Generator: hatchling 1.14.0",
+          # which has to match the public PyPI wheel byte-for-byte -- so we cannot upgrade.
+          # Instead, pre-import importlib.util at interpreter startup via a sitecustomize.py
+          # on PYTHONPATH, so it is already in sys.modules inside the build backend subprocess.
+          mkdir -p "$RUNNER_TEMP/buildhook"
+          echo 'import importlib.util  # noqa: F401' > "$RUNNER_TEMP/buildhook/sitecustomize.py"
+          PYTHONPATH="$RUNNER_TEMP/buildhook" python -m build -s -w --no-isolation
+      - name: Upload Distributions
+        uses: actions/upload-artifact@v4
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_TOKEN }}
+          name: dist
+          path: dist/*
+          if-no-files-found: error

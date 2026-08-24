@@ -1,14 +1,12 @@
 name: build
 
 on:
-  push:
-    branches:
-      - 'main'
-    tags:
-    - '**'
-  pull_request:
-    branches:
-    - '**'
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional pytest selector; empty runs the full suite'
+        required: false
+        default: ''
 
 jobs:
   tests:
@@ -16,38 +14,39 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        platform: [ubuntu-latest, windows-latest]
+        platform: [ubuntu-22.04, windows-latest]
         tox-env: [py37, py38, py39, py310, py311, nolxml, nohtml5lib]
+        # Pin exact CPython patch releases for 3.9/3.10/3.11: security patches
+        # published after 3.9.13/3.10.11/3.11.9 changed html.parser's handling of
+        # <iframe> raw text, which 2.4.1 (April 2023) predates. Pinning keeps both
+        # platforms on an identical stdlib.
         include:
           - tox-env: py37
             python-version: 3.7
-            continue-on-error: false
           - tox-env: py38
             python-version: 3.8
-            continue-on-error: false
           - tox-env: py39
-            python-version: 3.9
-            continue-on-error: false
+            python-version: '3.9.13'
           - tox-env: py310
-            python-version: '3.10'
-            continue-on-error: false
+            python-version: '3.10.11'
           - tox-env: py311
-            python-version: '3.11'
-            continue-on-error: false
+            python-version: '3.11.9'
           - tox-env: nolxml
-            python-version: '3.11'
-            continue-on-error: false
+            python-version: '3.11.9'
           - tox-env: nohtml5lib
-            python-version: '3.10'
-            continue-on-error: false
+            python-version: '3.10.11'
         # exclude:
         #   - platform: windows-latest
         #     tox-env: py311
 
     env:
       TOXENV: ${{ matrix.tox-env }}
+      # Resolve every dependency as it existed on the 2.4.1 release date so the
+      # legs see the toolchain upstream's own CI saw in April 2023.
+      PIP_INDEX_URL: 'https://:2023-04-16@time-machines-pypi.sealsecurity.io/'
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 40
 
     steps:
     - uses: actions/checkout@v3
@@ -65,17 +64,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip setuptools build tox coverage
     - name: Test
+      shell: bash
       run: |
-        python -m tox
-      continue-on-error: ${{ matrix.continue-on-error }}
-    - name: Upload Results
-      if: success()
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: ${{ matrix.platform }}-${{ matrix.tox-env }}
-        fail_ci_if_error: false
+        if [ -n "${{ inputs.test-filter }}" ]; then
+          python -m tox -- ${{ inputs.test-filter }}
+        else
+          python -m tox
+        fi
 
   lint:
     strategy:
@@ -85,8 +80,10 @@ jobs:
 
     env:
       TOXENV: lint
+      PIP_INDEX_URL: 'https://:2023-04-16@time-machines-pypi.sealsecurity.io/'
 
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v3
@@ -109,8 +106,10 @@ jobs:
 
     env:
       TOXENV: documents
+      PIP_INDEX_URL: 'https://:2023-04-16@time-machines-pypi.sealsecurity.io/'
 
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v3
@@ -123,6 +122,7 @@ jobs:
         python -m pip install --upgrade pip setuptools tox
     - name: Install Aspell
       run: |
+        sudo apt-get update
         sudo apt-get install aspell aspell-en
     - name: Build documents
       run: |
