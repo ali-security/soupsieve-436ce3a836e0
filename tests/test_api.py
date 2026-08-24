@@ -590,6 +590,82 @@ class TestInvalid(util.TestCase):
         with self.assertRaises(TypeError):
             sv.filter('div', "not a tag", flags=flags)
 
+    def test_excessive_selectors(self):
+        """Test excessive selectors."""
+
+        # Build a selector string: "a,a,a,...,a"
+        count = 10000
+        selector = ",".join("a" for _ in range(count))
+
+        # Compile the selector
+        with self.assertRaises(ValueError):
+            sv.compile(selector)
+
+    def test_excessive_group_selectors(self):
+        """Test excessive selectors in `:is()` and `:where()`."""
+
+        count = 10000
+        selector = ':is({})'.format("," * count)
+
+        # Compile the selector
+        with self.assertRaises(ValueError):
+            sv.compile(selector)
+
+        selector = ':where({})'.format("," * count)
+
+        # Compile the selector
+        with self.assertRaises(ValueError):
+            sv.compile(selector)
+
+    def test_excessive_relative_selectors(self):
+        """Test excessive empty slots in `:has()`."""
+
+        count = 10000
+        selector = 'div:has({}a)'.format("," * count)
+
+        # Empty slots in a relative selector list are a syntax error,
+        # so they cannot be used to allocate selectors without limit.
+        with self.assertRaises(sv.SelectorSyntaxError):
+            sv.compile(selector)
+
+    def test_excessive_custom_selectors(self):
+        """Test excessive custom selectors."""
+
+        # Build a selector string: "a,a,a,...,a"
+        count = 10000
+        selector = ",".join("a" for _ in range(count))
+
+        # Compile the selector
+        with self.assertRaises(ValueError):
+            sv.compile('div:--custom', custom={':--custom': selector})
+
+    def test_excessive_custom_and_normal_selectors(self):
+        """Test excessive custom and normal selectors."""
+
+        count = 5000
+        selector = ",".join("a" for _ in range(count))
+
+        # Compile the selector
+        with self.assertRaises(ValueError):
+            sv.compile(':is({}):--custom'.format(selector), custom={':--custom': selector})
+
+    def test_excessive_pseudo_class_expansion(self):
+        """Test excessive selectors allocated by expanding a pseudo-class."""
+
+        # Pseudo-classes such as `:read-write` are a single token, but each one
+        # expands to a large selector list that is compiled ahead of time. Counting
+        # only the tokens would let a short selector allocate many times more
+        # selectors than its length suggests, so the expanded size must count too.
+        with self.assertRaises(ValueError):
+            sv.compile('div' + (':read-write' * 500))
+
+        with self.assertRaises(ValueError):
+            sv.compile('div' + (':disabled' * 500))
+
+        # A handful of the same pseudo-classes is far below the limit and must still compile.
+        sv.compile('div' + (':read-write' * 5))
+        sv.compile('div' + (':disabled' * 5))
+
 
 class TestSyntaxErrorReporting(util.TestCase):
     """Test reporting of syntax errors."""

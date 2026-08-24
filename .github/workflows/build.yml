@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       test-filter:
-        description: 'Optional pytest selector; empty runs the full suite'
+        description: 'Optional pytest -k expression; empty runs the full suite'
         required: false
         default: ''
 
@@ -65,9 +65,15 @@ jobs:
         python -m pip install --upgrade pip setuptools build tox coverage
     - name: Test
       shell: bash
+      env:
+        # tox's pytest command already passes `{toxinidir}`, so a path posarg cannot
+        # narrow the run -- only a `-k` expression can. Keep the filter in a variable
+        # and quote it so a multi-term expression ("foo or bar") reaches pytest as a
+        # single `-k` argument instead of being split into stray path arguments.
+        TEST_FILTER: ${{ inputs.test-filter }}
       run: |
-        if [ -n "${{ inputs.test-filter }}" ]; then
-          python -m tox -- ${{ inputs.test-filter }}
+        if [ -n "$TEST_FILTER" ]; then
+          python -m tox -- -k "$TEST_FILTER"
         else
           python -m tox
         fi
